@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import argparse
 import os
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from mail_ops import (
     MailConfig,
+    get_attachment_content,
     list_mail_folders,
     read_message_by_uid,
     search_messages,
@@ -32,7 +34,8 @@ mcp = FastMCP(
     instructions=(
         "Personal mailbox tools over IMAP/SMTP. "
         "Use an app password for Yandex; From must match the authenticated address. "
-        "For actual threaded replies, pass in_reply_to and references headers from the original email."
+        "For actual threaded replies, pass in_reply_to and references headers from the original email. "
+        "Attachments can be downloaded as base64 and sent either from local paths or base64 payloads."
     ),
 )
 
@@ -84,6 +87,27 @@ def read_email(uid: int, folder: str = "INBOX") -> dict:
 
 
 @mcp.tool()
+def get_attachment(
+    uid: int,
+    folder: str = "INBOX",
+    attachment_index: int | None = None,
+    filename: str | None = None,
+) -> dict:
+    """Fetch one attachment from an email and return it as base64.
+
+    Use attachment_index from read_email(). If the message has only one attachment,
+    you can omit both attachment_index and filename.
+    """
+    return get_attachment_content(
+        _config(),
+        folder=folder,
+        uid=uid,
+        attachment_index=attachment_index,
+        filename=filename,
+    )
+
+
+@mcp.tool()
 def send_email(
     to: str,
     subject: str,
@@ -94,12 +118,18 @@ def send_email(
     reply_to_header: str | None = None,
     in_reply_to: str | None = None,
     references: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict:
     """Send mail via SMTP/SSL.
 
     `to`, `cc`, `bcc` are comma-separated addresses.
     `reply_to_header` sets the RFC Reply-To header.
     `in_reply_to` and `references` are used for proper message threading.
+
+    `attachments` is an optional list. Each item must contain one of:
+      - {"path": "/absolute/or/relative/file.pdf"}
+      - {"filename": "note.txt", "content_text": "hello"}
+      - {"filename": "file.pdf", "content_base64": "...", "content_type": "application/pdf"}
     """
     to_list = _parse_recipients(to)
     if not to_list:
@@ -117,6 +147,7 @@ def send_email(
         reply_to_header=reply_to_header,
         in_reply_to=in_reply_to,
         references=references,
+        attachments=attachments,
     )
 
 

@@ -27,6 +27,40 @@ And I improved `read_email` output by returning:
 - attachment metadata
 - message threading headers
 
+## Attachment support
+
+This version supports both reading and sending attachments.
+
+### Download an attachment from a received email
+
+1. Call `read_email(uid=..., folder="INBOX")`
+2. Inspect the `attachments` list
+3. Use `attachment_index` with `get_attachment(...)`
+
+`get_attachment(...)` returns:
+- `filename`
+- `content_type`
+- `size_bytes`
+- `content_base64`
+
+### Send attachments in outgoing email
+
+`send_email(...)` accepts an `attachments` list.
+
+Each item can be one of:
+
+```json
+{"path": "/path/to/file.pdf"}
+```
+
+```json
+{"filename": "note.txt", "content_text": "hello from MCP"}
+```
+
+```json
+{"filename": "report.pdf", "content_base64": "JVBERi0x...", "content_type": "application/pdf"}
+```
+
 ## Files
 
 - `server.py` — MCP tool definitions and transport startup
@@ -121,6 +155,9 @@ Returns:
 - `body_plain`
 - `body_html`
 
+### `get_attachment(uid, folder="INBOX", attachment_index=None, filename=None)`
+Fetches a single attachment and returns it as base64.
+
 ### `send_email(...)`
 Sends a message through SMTP.
 
@@ -128,6 +165,7 @@ Important parameters:
 - `reply_to_header` — sets the Reply-To header
 - `in_reply_to` — threading header
 - `references` — threading header
+- `attachments` — optional list of attachment specs
 
 For a real reply, use `in_reply_to` and usually also `references`.
 
@@ -142,7 +180,8 @@ Use an **app password**, not your main account password.
 
 ## Next sensible upgrades
 
-- attachment download tool
+- inline/embedded image attachments
+- attachment size limits and streaming
 - move/archive/delete tools with confirmation
 - OAuth instead of env-based credentials
 - tests with mocked IMAP/SMTP backends
