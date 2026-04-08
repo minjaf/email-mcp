@@ -61,6 +61,26 @@ Each item can be one of:
 {"filename": "report.pdf", "content_base64": "JVBERi0x...", "content_type": "application/pdf"}
 ```
 
+## Sent folder behavior
+
+After SMTP send succeeds, the same MIME message is appended to your IMAP sent folder.
+
+By default that folder name is:
+
+```bash
+Sent
+```
+
+You can override it if your mailbox uses a different IMAP folder name:
+
+```bash
+export SENT_FOLDER="Sent"
+# or
+export MAILBOX_SENT_FOLDER="Sent"
+```
+
+If sent mail does not show up, first run `list_folders()` and use the exact folder name returned by your mailbox.
+
 ## Files
 
 - `server.py` — MCP tool definitions and transport startup
@@ -83,6 +103,12 @@ export IMAP_HOST="imap.yandex.com"
 export IMAP_PORT="993"
 export SMTP_HOST="smtp.yandex.com"
 export SMTP_PORT="465"
+```
+
+Optional sent-folder setting:
+
+```bash
+export SENT_FOLDER="Sent"
 ```
 
 Optional MCP server settings:

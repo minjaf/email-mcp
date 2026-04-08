@@ -7,11 +7,12 @@ import mimetypes
 import os
 import smtplib
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
 from email.parser import BytesParser
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ class MailConfig:
     imap_port: int
     smtp_host: str
     smtp_port: int
+    sent_folder: str
 
     @classmethod
     def from_env(cls) -> "MailConfig":
@@ -48,6 +50,7 @@ class MailConfig:
         smtp_host = _env("SMTP_HOST", default="smtp.yandex.com") or "smtp.yandex.com"
         imap_port = int(_env("IMAP_PORT", default="993") or "993")
         smtp_port = int(_env("SMTP_PORT", default="465") or "465")
+        sent_folder = _env("SENT_FOLDER", "MAILBOX_SENT_FOLDER", default="Sent") or "Sent"
         return cls(
             address=address,
             password=password,
@@ -55,6 +58,7 @@ class MailConfig:
             imap_port=imap_port,
             smtp_host=smtp_host,
             smtp_port=smtp_port,
+            sent_folder=sent_folder,
         )
 
 
@@ -397,6 +401,20 @@ def _add_attachments_to_message(msg: EmailMessage, attachments: list[dict[str, A
     return attachment_names
 
 
+def _message_to_bytes(msg: EmailMessage) -> bytes:
+    buf = BytesIO()
+    gen = policy.SMTP.clone(linesep="\r\n")
+    buf.write(msg.as_bytes(policy=gen))
+    return buf.getvalue()
+
+
+def _append_to_sent(cfg: MailConfig, msg: EmailMessage) -> None:
+    raw = _message_to_bytes(msg)
+    with imap_client(cfg) as client:
+        client.login(cfg.address, cfg.password)
+        client.append(cfg.sent_folder, raw, msg_time=datetime.now())
+
+
 def send_message(
     cfg: MailConfig,
     *,
@@ -441,6 +459,8 @@ def send_message(
         smtp.login(cfg.address, cfg.password)
         smtp.send_message(msg, from_addr=cfg.address, to_addrs=recipients)
 
+    _append_to_sent(cfg, msg)
+
     return {
         "ok": True,
         "to": recipients,
@@ -448,4 +468,6 @@ def send_message(
         "in_reply_to": in_reply_to or "",
         "attachment_count": len(attachment_names),
         "attachment_names": attachment_names,
+        "saved_to_sent": True,
+        "sent_folder": cfg.sent_folder,
     }
