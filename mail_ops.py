@@ -33,7 +33,7 @@ class MailConfig:
     smtp_port: int
 
     @classmethod
-    def from_env(cls) -> MailConfig:
+    def from_env(cls) -> "MailConfig":
         address = _env("MAILBOX_EMAIL", "YANDEX_EMAIL")
         password = _env("MAILBOX_PASSWORD", "YANDEX_APP_PASSWORD")
         if not address or not password:
@@ -66,7 +66,7 @@ def list_mail_folders(cfg: MailConfig) -> list[dict[str, Any]]:
         for flags, delimiter, name in client.list_folders():
             out.append(
                 {
-                    "name": name,
+                    "name": _decode_text(name),
                     "delimiter": delimiter.decode() if isinstance(delimiter, bytes) else delimiter,
                     "flags": [f.decode() if isinstance(f, bytes) else str(f) for f in (flags or ())],
                 }
@@ -154,10 +154,34 @@ def _decode_mime_words(s: bytes | str) -> str:
         return s.decode("utf-8", errors="replace")
 
 
+def _decode_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return _decode_mime_words(value)
+    return str(value)
+
+
+def _format_address(addr: Any) -> str:
+    name = _decode_text(getattr(addr, "name", None)).strip()
+    mailbox = _decode_text(getattr(addr, "mailbox", None)).strip()
+    host = _decode_text(getattr(addr, "host", None)).strip()
+
+    if mailbox and host:
+        email_addr = f"{mailbox}@{host}"
+    else:
+        email_addr = _decode_text(addr).strip()
+
+    if name and email_addr and name != email_addr:
+        return f"{name} <{email_addr}>"
+    return email_addr or name
+
+
 def _format_addresses(addr_list: Any) -> str:
     if not addr_list:
         return ""
-    return ", ".join(str(a) for a in addr_list)
+    parts = [_format_address(a) for a in addr_list]
+    return ", ".join(part for part in parts if part)
 
 
 def read_message_by_uid(cfg: MailConfig, folder: str, uid: int) -> dict[str, Any]:
@@ -182,15 +206,29 @@ def read_message_by_uid(cfg: MailConfig, folder: str, uid: int) -> dict[str, Any
         return {
             "uid": uid,
             "folder": folder,
-            "subject": str(msg.get("subject") or ""),
-            "from": str(msg.get("from") or ""),
-            "to": str(msg.get("to") or ""),
-            "cc": str(msg.get("cc") or ""),
-            "date": str(msg.get("date") or ""),
+            "subject": _decode_header_value(msg.get("subject")),
+            "from": _decode_header_value(msg.get("from")),
+            "to": _decode_header_value(msg.get("to")),
+            "cc": _decode_header_value(msg.get("cc")),
+            "reply_to": _decode_header_value(msg.get("reply-to")),
+            "message_id": _decode_header_value(msg.get("message-id")),
+            "in_reply_to": _decode_header_value(msg.get("in-reply-to")),
+            "references": _decode_header_value(msg.get("references")),
+            "date": _decode_header_value(msg.get("date")),
             "flags": flag_list,
+            "attachments": _extract_attachments(msg),
             "body_plain": plain,
             "body_html": html,
         }
+
+
+def _decode_header_value(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return str(make_header(decode_header(value)))
+    except Exception:
+        return value
 
 
 def _safe_part_content(part: Message) -> str:
@@ -228,6 +266,23 @@ def _extract_bodies(msg: Message) -> tuple[str, str]:
     return ("\n\n".join(plain_parts).strip(), "\n\n".join(html_parts).strip())
 
 
+def _extract_attachments(msg: Message) -> list[dict[str, Any]]:
+    attachments: list[dict[str, Any]] = []
+    for part in msg.walk():
+        disposition = part.get_content_disposition()
+        filename = part.get_filename()
+        if disposition == "attachment" or filename:
+            payload = part.get_payload(decode=True)
+            attachments.append(
+                {
+                    "filename": _decode_header_value(filename),
+                    "content_type": part.get_content_type(),
+                    "size_bytes": len(payload) if isinstance(payload, bytes) else None,
+                }
+            )
+    return attachments
+
+
 def send_message(
     cfg: MailConfig,
     *,
@@ -237,7 +292,9 @@ def send_message(
     body_html: str | None,
     cc: list[str] | None,
     bcc: list[str] | None,
-    reply_to: str | None,
+    reply_to_header: str | None,
+    in_reply_to: str | None,
+    references: str | None,
 ) -> dict[str, Any]:
     msg = EmailMessage()
     msg["From"] = cfg.address
@@ -245,8 +302,12 @@ def send_message(
     msg["Subject"] = subject
     if cc:
         msg["Cc"] = ", ".join(cc)
-    if reply_to:
-        msg["Reply-To"] = reply_to
+    if reply_to_header:
+        msg["Reply-To"] = reply_to_header
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
     if body_html:
         msg.set_content(body_text or "(no plain text body)")
         msg.add_alternative(body_html, subtype="html")
@@ -263,4 +324,9 @@ def send_message(
         smtp.login(cfg.address, cfg.password)
         smtp.send_message(msg, from_addr=cfg.address, to_addrs=recipients)
 
-    return {"ok": True, "to": recipients, "subject": subject}
+    return {
+        "ok": True,
+        "to": recipients,
+        "subject": subject,
+        "in_reply_to": in_reply_to or "",
+    }

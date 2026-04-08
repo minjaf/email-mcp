@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Personal MCP server: Yandex (or any) mailbox over IMAP + SMTP.
+"""Personal MCP server: mailbox over IMAP + SMTP.
 
-Uses stdio transport by default — no TCP listen port on this host (avoids
-conflicts with panels/VPN such as 3xUI on 443/2096/etc.).
+Default mode is stdio for local MCP clients. For ChatGPT web app integration,
+run with --transport streamable-http and expose the port over public HTTPS.
 
 Environment:
-  MAILBOX_EMAIL, MAILBOX_PASSWORD — required (aliases: YANDEX_EMAIL, YANDEX_APP_PASSWORD)
+  MAILBOX_EMAIL, MAILBOX_PASSWORD — required
+    (aliases: YANDEX_EMAIL, YANDEX_APP_PASSWORD)
   IMAP_HOST (default imap.yandex.com), IMAP_PORT (993)
   SMTP_HOST (default smtp.yandex.com), SMTP_PORT (465)
+  MCP_TRANSPORT (default stdio), MCP_HOST (default 0.0.0.0), MCP_PORT (default 8000)
 """
 
 from __future__ import annotations
+
+import argparse
+import os
 
 from mcp.server.fastmcp import FastMCP
 
@@ -26,7 +31,8 @@ mcp = FastMCP(
     "personal-mail",
     instructions=(
         "Personal mailbox tools over IMAP/SMTP. "
-        "Use an app password for Yandex; From must match the authenticated address."
+        "Use an app password for Yandex; From must match the authenticated address. "
+        "For actual threaded replies, pass in_reply_to and references headers from the original email."
     ),
 )
 
@@ -70,7 +76,10 @@ def search_emails(
 
 @mcp.tool()
 def read_email(uid: int, folder: str = "INBOX") -> dict:
-    """Fetch one message by IMAP UID (does not mark as read). Plain + HTML bodies when present."""
+    """Fetch one message by IMAP UID without marking it as read.
+
+    Returns decoded headers, plain/html bodies, and attachment metadata.
+    """
     return read_message_by_uid(_config(), folder, uid)
 
 
@@ -82,11 +91,15 @@ def send_email(
     body_html: str | None = None,
     cc: str = "",
     bcc: str = "",
-    reply_to: str | None = None,
+    reply_to_header: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
 ) -> dict:
-    """Send mail via SMTP/SSL. `to`, `cc`, `bcc` are comma-separated addresses.
+    """Send mail via SMTP/SSL.
 
-    From is always the configured mailbox. Use an app password for Yandex.
+    `to`, `cc`, `bcc` are comma-separated addresses.
+    `reply_to_header` sets the RFC Reply-To header.
+    `in_reply_to` and `references` are used for proper message threading.
     """
     to_list = _parse_recipients(to)
     if not to_list:
@@ -101,9 +114,39 @@ def send_email(
         body_html=body_html,
         cc=cc_list or None,
         bcc=bcc_list or None,
-        reply_to=reply_to,
+        reply_to_header=reply_to_header,
+        in_reply_to=in_reply_to,
+        references=references,
     )
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Personal email MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http"],
+        default=os.getenv("MCP_TRANSPORT", "stdio"),
+        help="Transport protocol (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("MCP_HOST", "0.0.0.0"),
+        help="Bind host for HTTP transports (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MCP_PORT", "8000")),
+        help="Bind port for HTTP transports (default: 8000)",
+    )
+    args = parser.parse_args()
+
+    if args.transport != "stdio":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+
+    mcp.run(transport=args.transport)
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    main()
